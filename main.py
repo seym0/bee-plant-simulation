@@ -2,7 +2,7 @@ import math
 
 
 class Nature:
-    def __init__(self, base_temp=10, amplitude=15, warming_rate=0.5):
+    def __init__(self, base_temp=10, amplitude=15, warming_rate=0.02):
         self.day = 1
         self.year = 1
         self.base_temp = base_temp       # Базовая температура
@@ -29,16 +29,17 @@ class Nature:
 class Plant:
     def __init__(self, base_bloom_threshold=12, nectar_amount=500, seasonal_nectar_capacity=10000, bloom_duration=60, adaptation_rate=0.9):
         self.base_bloom_threshold = base_bloom_threshold  # Температура, при которой растение начинает цвести
-        self.current_bloom_threshold = base_bloom_threshold
+        self.current_bloom_threshold = base_bloom_threshold # Этот порог будет адаптироваться с потеплением
         self.daily_nectar_supply = nectar_amount  # Максимум нектара, который растение может дать за один день цветения
-        self.seasonal_nectar_capacity = seasonal_nectar_capacity
-        self.nectar_available = seasonal_nectar_capacity
-        self.daily_nectar_available = 0
-        self.bloom_duration = bloom_duration
-        self.bloom_days_left = 0
-        self.is_blooming = False
-        self.is_pollinated = False
-        self.adaptation_rate = adaptation_rate
+        self.seasonal_nectar_capacity = seasonal_nectar_capacity # Максимальный запас нектара за сезон (ограничивает общее количество нектара, которое растение может произвести за сезон)
+        self.nectar_available = seasonal_nectar_capacity # Текущий запас нектара, который может быть собран пчелами (уменьшается при сборе)
+        self.daily_nectar_available = 0 # Количество нектара, доступного в текущий день (обновляется при каждом вызове check_status)
+        self.bloom_duration = bloom_duration # Количество дней, в течение которых растение будет цвести после достижения порога
+        self.bloom_days_left = 0 # Счетчик оставшихся дней цветения
+        self.is_blooming = False # Флаг, указывающий, цветет ли растение в текущий день
+        self.has_bloomed = False # Флаг, указывающий, запускалось ли цветение в этом году (чтобы не запускать его повторно при каждом достижении порога)
+        self.is_pollinated = False # Флаг, указывающий, было ли растение опылено в текущем году (может влиять на адаптацию и воспроизводство)
+        self.adaptation_rate = adaptation_rate # Растения адаптируются быстрее, чем пчелы, поэтому высокий коэффициент адаптации
     
     def adapt_to_climate(self, warming_degrees):
         # Растения адаптируются быстрее и начинают цвести раньше при потеплении
@@ -47,8 +48,10 @@ class Plant:
     def check_status(self, current_temp):
         if self.bloom_days_left > 0:
             self.is_blooming = True
-        elif current_temp >= self.current_bloom_threshold and self.nectar_available > 0:
+        # Запускаем цветение только если в этом году оно еще не запускалось:
+        elif current_temp >= self.current_bloom_threshold and self.nectar_available > 0 and not self.has_bloomed:
             self.is_blooming = True
+            self.has_bloomed = True  # Запоминаем, что процесс пошел
             self.bloom_days_left = self.bloom_duration
         else:
             self.is_blooming = False
@@ -76,12 +79,14 @@ class Plant:
         # Сброс флагов и восстановление запасов нектара перед новым сезоном
         self.is_blooming = False
         self.is_pollinated = False
+        self.has_bloomed = False
         self.nectar_available = self.seasonal_nectar_capacity
         self.daily_nectar_available = 0
         self.bloom_days_left = 0
 
 
 class BeePopulation:
+    # не все пчелы просыпаются одновременно
     def __init__(self, initial_population=100, base_activation_temp=13, adaptation_rate=0.3):
         self.population = initial_population
         self.base_activation_temp = base_activation_temp
@@ -163,8 +168,20 @@ class BeePopulation:
 
 if __name__ == "__main__":
     # 1. Инициализация мира
-    nature = Nature(base_temp=10, amplitude=15, warming_rate=0.5)
-    plant = Plant(base_bloom_threshold=12)
+    nature = Nature(base_temp=10, amplitude=15, warming_rate=0.02)
+    # plant = Plant(base_bloom_threshold=12)
+    # Инициализируем флору с разными порогами активации
+    flora = [
+        # Ранневесенние (просыпаются уже при 10°C, цветут 40 дней)
+        Plant(base_bloom_threshold=10, bloom_duration=40, nectar_amount=300, seasonal_nectar_capacity=6000),
+    
+        # Летнее разнотравье (базовый порог 12°C, цветут 60 дней)
+        Plant(base_bloom_threshold=12, bloom_duration=60, nectar_amount=500, seasonal_nectar_capacity=10000),
+    
+        # Позднецветущие (требуют стабильного тепла 15°C, цветут 45 дней)
+        Plant(base_bloom_threshold=15, bloom_duration=45, nectar_amount=400, seasonal_nectar_capacity=8000)
+        ]
+    
     bees = BeePopulation(initial_population=100, base_activation_temp=13)
 
     years_to_simulate = 20
@@ -176,34 +193,44 @@ if __name__ == "__main__":
         warming = year * nature.warming_rate
         
         # Пересчет порогов (климатическая адаптация перед стартом года)
-        plant.adapt_to_climate(warming)
+        for plant in flora:
+            plant.adapt_to_climate(warming)
         bees.adapt_to_climate(warming)
 
         # Сброс состояний перед стартом очередного года
         bees.reset_for_next_year()
-        plant.reset_for_next_year()
+        for plant in flora:
+            plant.reset_for_next_year()
 
         # ВНУТРЕННИЙ ЦИКЛ: Дни
         for day in range(1, 366):
             temp = nature.get_current_temp()
 
-            # Обновление состояния персонажей
-            plant.check_status(temp)
+            # Обновление состояния растений и пчел
+            for plant in flora:
+                plant.check_status(temp)
             bees.check_status(temp)
-
-            # Проверка взаимодействия
+            
+            # 2. Логика поиска еды
+            fed_today = False
             if bees.population > 0 and bees.is_active:
-                if plant.is_blooming:
-                    nectar = plant.harvest_nectar(bees.population)
-                    if nectar > 0:
-                        sync_days += 1
-                        bees.eat(nectar)
-                        plant.pollinate()
-                    else:
-                        bees.apply_flight_cost()
-                else:
-                    # Рассинхрон: пчела ищет еду, но цветы недоступны
-                    bees.apply_flight_cost()
+                # Пчелы ищут первое попавшееся цветущее растение с нектаром
+                for plant in flora:
+                    if plant.is_blooming:
+                        nectar = plant.harvest_nectar(bees.population)
+                        if nectar > 0:
+                            bees.eat(nectar)
+                            plant.pollinate()
+                            fed_today = True
+                            # Если наелись с этого вида флоры, другие сегодня не трогаем
+                            break 
+        
+            # Успешный день синхронизации засчитывается, если нашли хоть какую-то еду
+            if fed_today:
+                sync_days += 1
+            else:
+                # Все отцвели или еще не распустились — пчелы тратят энергию впустую
+                bees.apply_flight_cost()
 
             # Переход к следующему дню
             nature.update()
