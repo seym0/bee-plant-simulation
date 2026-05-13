@@ -140,12 +140,18 @@ def plot_simulation_results(history_data, output_file='simulation_results.png'):
         ax2.bar(history_data.years, height=heights, bottom=starts, width=0.8, 
                 color=plant_colors[idx % len(plant_colors)], alpha=0.7, label=plant_name)
     
-    # Активность пчел (дискретные бары с штриховкой)
+    # Активность пчел (непрерывная полоса)
     bee_starts = [s if s is not None else np.nan for s, e in history_data.bee_activity_periods]
-    bee_durations = [e - s if s is not None and e is not None else 0 for s, e in history_data.bee_activity_periods]
-    ax2.bar(history_data.years, height=bee_durations, bottom=bee_starts, width=0.4, 
-            facecolor='none', edgecolor='black', hatch='//', linewidth=1.2, 
-            zorder=10, label='Bee Activity Window')
+    bee_ends = [e if e is not None else np.nan for s, e in history_data.bee_activity_periods]
+    
+    # Граничные кривые
+    ax2.plot(history_data.years, bee_starts, color='dodgerblue', linewidth=2.0, zorder=11)
+    ax2.plot(history_data.years, bee_ends, color='dodgerblue', linewidth=2.0, zorder=11)
+    
+    # Заполнение непрерывной области между кривыми
+    ax2.fill_between(history_data.years, bee_starts, bee_ends,
+                     facecolor='dodgerblue', edgecolor='none', alpha=0.2,
+                     zorder=10, label='Bee Activity Band')
     
     ax2.legend(loc='best', fontsize=9, framealpha=0.95)
     ax2.grid(True, alpha=0.3)
