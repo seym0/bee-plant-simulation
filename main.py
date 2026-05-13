@@ -26,7 +26,7 @@ class Nature:
 
 class Plant:
     """Модель отдельного вида растений со своими биологическими порогами и зависимостью от опыления."""
-    def __init__(self, name, base_bloom_threshold, bloom_duration, nectar_amount=500, seasonal_nectar_capacity=10000, adaptation_rate=0.9):
+    def __init__(self, name, base_bloom_threshold, bloom_duration, nectar_amount=500, seasonal_nectar_capacity=10000, adaptation_rate=0.9, seed_bank=10000):
         self.name = name
         self.base_bloom_threshold = base_bloom_threshold
         self.current_bloom_threshold = base_bloom_threshold
@@ -45,6 +45,11 @@ class Plant:
         self.has_bloomed = False  # Гарантирует один цикл цветения за год
         self.is_pollinated = False
         self.is_alive = True      # Без опыления вид погибает
+
+        # Новые атрибуты для динамики популяции
+        self.seed_bank = seed_bank  # Объем популяции (банк семян), стартовое значение 10000
+        self.visits = 0  # Количество визитов пчел за сезон
+        self.weak_years = 0  # Счетчик подряд лет слабого опыления
 
     def adapt_to_climate(self, warming_degrees):
         if not self.is_alive:
@@ -68,9 +73,11 @@ class Plant:
         else:
             self.is_blooming = False
 
-        # Выделение суточной порции нектара
+        # Выделение суточной порции нектара — зависит от seed_bank
         if self.is_blooming and self.nectar_available > 0:
-            self.daily_nectar_available = min(self.daily_nectar_supply, self.nectar_available)
+            # Дневной лимит нектара пропорционален размеру популяции
+            population_factor = self.seed_bank / 10000.0  # Нормализация к стартовому значению
+            self.daily_nectar_available = min(self.daily_nectar_supply * population_factor, self.nectar_available)
         else:
             self.daily_nectar_available = 0
 
@@ -91,13 +98,35 @@ class Plant:
     def pollinate(self):
         if self.is_alive and self.is_blooming:
             self.is_pollinated = True
+            self.visits += 1  # Увеличиваем счетчик визитов пчел
 
-    def complete_year(self):
-        """Проверка выживания вида в конце года. Если цвел, но не дождался пчел — погибает."""
-        if self.is_alive and self.has_bloomed and not self.is_pollinated:
+    def reproduce(self):
+        """Расчет размера популяции на следующий год на основе качества опыления."""
+        if self.seed_bank <= 0:
             self.is_alive = False
-            return False  # Сигнал о гибели вида
-        return True
+            return
+
+        # Параметры формулы
+        R_base = 0.5  # Базовый коэффициент роста
+        K_pollination = 0.5  # Коэффициент влияния опыления
+        Visits_required = 60  # Минимальное количество визитов для полного опыления
+        Loss_natural = 0.1  # Естественная потеря (10%)
+
+        # Расчет нового seed_bank
+        pollination_ratio = min(1.0, self.visits / Visits_required)
+        growth_factor = R_base + K_pollination * pollination_ratio
+        new_seed_bank = int(self.seed_bank * growth_factor * (1 - Loss_natural))
+
+        # Логика слабого опыления
+        if self.visits < Visits_required:
+            self.weak_years += 1
+            if self.weak_years >= 3:
+                new_seed_bank = 0  # Вырождение после 3 лет слабого опыления
+        else:
+            self.weak_years = 0  # Сброс счетчика при хорошем опылении
+
+        self.seed_bank = max(0, new_seed_bank)
+        self.is_alive = self.seed_bank > 0
 
     def reset_for_next_year(self):
         if not self.is_alive:
@@ -108,6 +137,7 @@ class Plant:
         self.nectar_available = self.seasonal_nectar_capacity
         self.daily_nectar_available = 0
         self.bloom_days_left = 0
+        self.visits = 0  # Сброс визитов для нового сезона
 
 
 class BeePopulation:
@@ -292,21 +322,15 @@ if __name__ == "__main__":
         # --- ПОДВЕДЕНИЕ ИТОГОВ ГОДА ---
         bees.complete_year(sync_days)
         
-        # Проверка выживания каждого вида растений
-        dead_plants_this_year = []
+        # Репродукция растений на основе визитов пчел
         for plant in flora:
-            # Если растение погибло именно в этом году (complete_year вернул False)
-            if not plant.complete_year() and plant.has_bloomed:
-                dead_plants_this_year.append(plant.name)
-
+            plant.reproduce()
+        
         # Логирование результатов
         status = "Жива" if bees.population > 0 else "Погибла"
         active_flora = [p.name for p in flora if p.is_alive]
         
         print(f"Год {year}: Дней синхронизации = {sync_days} | Популяция пчел: {bees.population} ({status})")
-        if dead_plants_this_year:
-            for dp in dead_plants_this_year:
-                print(f"  [!] {dp} погиб из-за критического отсутствия опыления!")
         print(f"  Живая флора в экосистеме: {', '.join(active_flora) if active_flora else 'Нет выживших видов'}\n")
 
         # Условия досрочного прерывания
