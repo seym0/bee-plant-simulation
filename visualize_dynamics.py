@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import seaborn as sns
 from datetime import datetime
+import math
+from collections import defaultdict
+import numpy as np
 
 
 class SimulationLogger:
@@ -18,6 +21,10 @@ class SimulationLogger:
         self.temperature_mean = []
         self.bee_activation_day = []  # День просыпания пчел (вычисляется в конце года)
         self.plant_data = {}  # {plant_name: [seed_bank_values]}
+        
+        # Новые данные для фенологической синхронизации
+        self.plant_bloom_periods = defaultdict(list)  # {plant_name: [(start_day, end_day) per year]}
+        self.bee_activity_periods = []  # [(start_day, end_day) per year]
     
     def log_year(self, year, bees, flora, nature):
         """Логирование метрик в конце года."""
@@ -37,19 +44,42 @@ class SimulationLogger:
             if plant.name not in self.plant_data:
                 self.plant_data[plant.name] = []
             self.plant_data[plant.name].append(plant.seed_bank)
+            
+            # Логирование периодов цветения
+            self.plant_bloom_periods[plant.name].append((plant.bloom_start_day, plant.bloom_end_day))
+        
+        # Логирование периода активности пчел
+        self.bee_activity_periods.append((bees.start_day, bees.end_day))
     
     def _calculate_activation_day(self, activation_temp, nature):
         """Вычисляет день, когда температура впервые достигает порога активации."""
         for day in range(1, 366):
             yearly_mean = nature.base_temp + (nature.year * nature.warming_rate)
-            season_mod = 15 * (2 * 3.14159 * (day - 80) / 365)
-            # Упрощенный расчет (используем sin)
-            import math
             season_mod = 15 * math.sin(2 * math.pi * (day - 80) / 365)
             temp = yearly_mean + season_mod
             if temp >= activation_temp:
                 return day
         return 365  # Если не нашли, возвращаем конец года
+    
+    def _calculate_sleep_day(self, sleep_temp, nature):
+        """Вычисляет день, когда температура опускается ниже порога сна."""
+        for day in range(365, 0, -1):
+            yearly_mean = nature.base_temp + (nature.year * nature.warming_rate)
+            season_mod = 15 * math.sin(2 * math.pi * (day - 80) / 365)
+            temp = yearly_mean + season_mod
+            if temp < sleep_temp:
+                return day
+        return 1  # Если не нашли, возвращаем начало года
+    
+    def _calculate_bloom_start(self, plant, nature):
+        """Вычисляет день старта цветения растения."""
+        for day in range(1, 366):
+            yearly_mean = nature.base_temp + (nature.year * nature.warming_rate)
+            season_mod = 15 * math.sin(2 * math.pi * (day - 80) / 365)
+            temp = yearly_mean + season_mod
+            if temp >= plant.current_bloom_threshold:
+                return day
+        return 365
 
 
 def plot_simulation_results(history_data, output_file='simulation_results.png'):
@@ -92,39 +122,35 @@ def plot_simulation_results(history_data, output_file='simulation_results.png'):
     ax1.grid(True, alpha=0.3)
     ax1.set_ylim(bottom=0)
     
-    # ========== НИЖНИЙ ГРАФИК: Фенологический сдвиг и температура ==========
-    ax2.set_title('Климатические сдвиги и фенологический рассинхрон', fontsize=14, fontweight='bold', pad=15)
+    # ========== НИЖНИЙ ГРАФИК: Фенологическая синхронизация ==========
+    ax2.set_title('Фенологическая синхронизация: цветение растений и активность пчел', fontsize=14, fontweight='bold', pad=15)
+    ax2.set_ylabel('День года', fontsize=11, fontweight='bold')
+    ax2.set_ylim(0, 365)
     
-    # Двойная ось Y для температуры
-    ax2_twin = ax2.twinx()
+    # Цвета для растений
+    plant_colors = ['#FFB3BA', '#FFDFBA', '#FFFFBA', '#BAFFBA', '#BAE1FF', '#E8BAFF']
+    plant_names = list(history_data.plant_bloom_periods.keys())
     
-    # Температура (правая ось)
-    line_temp = ax2_twin.plot(history_data.years, history_data.temperature_mean,
-                              linewidth=2, marker='^', markersize=4,
-                              label='Среднегодовая температура', 
-                              color='#E63946', zorder=4)
-    ax2_twin.set_ylabel('Температура (°C)', fontsize=11, fontweight='bold', color='#E63946')
-    ax2_twin.tick_params(axis='y', labelcolor='#E63946')
+    # Вертикальные бары для цветения растений по годам
+    for idx, plant_name in enumerate(plant_names):
+        bloom_periods = history_data.plant_bloom_periods[plant_name]
+        starts = [s if s is not None else np.nan for s, e in bloom_periods]
+        ends = [e if e is not None else np.nan for s, e in bloom_periods]
+        heights = [e - s if s is not None and e is not None else 0 for s, e in bloom_periods]
+        ax2.bar(history_data.years, height=heights, bottom=starts, width=0.8, 
+                color=plant_colors[idx % len(plant_colors)], alpha=0.7, label=plant_name)
     
-    # День активации пчел (левая ось)
-    line_bee = ax2.plot(history_data.years, history_data.bee_activation_day,
-                        linewidth=2, marker='o', markersize=4,
-                        label='День просыпания пчел', 
-                        color='#457B9D', zorder=3)
+    # Активность пчел (дискретные бары с штриховкой)
+    bee_starts = [s if s is not None else np.nan for s, e in history_data.bee_activity_periods]
+    bee_durations = [e - s if s is not None and e is not None else 0 for s, e in history_data.bee_activity_periods]
+    ax2.bar(history_data.years, height=bee_durations, bottom=bee_starts, width=0.4, 
+            facecolor='none', edgecolor='black', hatch='//', linewidth=1.2, 
+            zorder=10, label='Bee Activity Window')
     
-    ax2.set_xlabel('Год симуляции', fontsize=11, fontweight='bold')
-    ax2.set_ylabel('День года', fontsize=11, fontweight='bold', color='#457B9D')
-    ax2.tick_params(axis='y', labelcolor='#457B9D')
-    ax2.set_ylim(50, 150)
+    ax2.legend(loc='best', fontsize=9, framealpha=0.95)
     ax2.grid(True, alpha=0.3)
     
-    # Объединенная легенда
-    lines = line_bee + line_temp
-    labels = [l.get_label() for l in lines]
-    ax2.legend(lines, labels, loc='upper right', fontsize=9, framealpha=0.95)
-    
     # Общие настройки
-    ax2.set_xlabel('Год симуляции', fontsize=11, fontweight='bold')
     fig.suptitle('Многолетняя динамика системы: Фенологический рассинхрон и коллапс',
                  fontsize=16, fontweight='bold', y=0.995)
     
@@ -165,10 +191,9 @@ def print_summary_statistics(history_data):
         else:
             print(f"    - Статус: Выжил")
     
-    print(f"\nФенологический сдвиг (день просыпания пчел):")
-    print(f"  - Год 1: день {history_data.bee_activation_day[0]}")
-    print(f"  - Год {len(history_data.years)}: день {history_data.bee_activation_day[-1]}")
-    print(f"  - Изменение: {history_data.bee_activation_day[-1] - history_data.bee_activation_day[0]} дней")
+    print(f"\nФенологическая синхронизация:")
+    print(f"  - Средний сезон активности пчел: дни {int(sum([s for s, e in history_data.bee_activity_periods if s is not None]) / len([s for s, e in history_data.bee_activity_periods if s is not None]))} - {int(sum([e for s, e in history_data.bee_activity_periods if e is not None]) / len([e for s, e in history_data.bee_activity_periods if e is not None]))}")
+    print(f"  - Виды растений с цветением: {len([p for p in history_data.plant_bloom_periods.keys() if any(start is not None for start, end in history_data.plant_bloom_periods[p])])} из {len(history_data.plant_bloom_periods)}")
     
     print(f"\nТемпературные изменения:")
     print(f"  - Средняя температура год 1: {history_data.temperature_mean[0]:.2f}°C")
