@@ -112,10 +112,12 @@ class Plant:
 
 class BeePopulation:
     """Модель колонии пчел-универсалов, страдающих от фенологического отставания."""
-    def __init__(self, initial_population=100, base_activation_temp=13, adaptation_rate=0.3):
+    def __init__(self, initial_population=100, base_activation_temp=13, base_sleep_temp=9, adaptation_rate=0.3):
         self.population = initial_population
         self.base_activation_temp = base_activation_temp
+        self.base_sleep_temp = base_sleep_temp
         self.current_activation_temp = base_activation_temp
+        self.current_sleep_temp = base_sleep_temp
         self.adaptation_rate = adaptation_rate  # Адаптируются медленнее флоры
 
         self.base_energy = 1000
@@ -128,10 +130,11 @@ class BeePopulation:
         self.nectar_collected = 0
         self.active_days = 0
         self.starvation_days = 0
-        self.max_starvation_days = 60
+        self.max_starvation_days = 15
 
     def adapt_to_climate(self, warming_degrees):
         self.current_activation_temp = self.base_activation_temp - (warming_degrees * self.adaptation_rate)
+        self.current_sleep_temp = self.base_sleep_temp - (warming_degrees * self.adaptation_rate)
 
     def check_status(self, current_temp):
         if self.population <= 0:
@@ -139,8 +142,12 @@ class BeePopulation:
             self.is_active = False
             return
 
-        # Выход из спячки только в зависимости от температуры.
-        self.is_active = current_temp >= self.current_activation_temp and self.is_alive
+        if self.is_active:
+            # Пчелы засыпают, когда температура опускается ниже порога ухода.
+            self.is_active = current_temp >= self.current_sleep_temp
+        else:
+            # Выпадение из спячки, когда запускается сезон.
+            self.is_active = current_temp >= self.current_activation_temp and self.is_alive
 
         # Расход энергии на поддержание жизни базы — только когда активны
         if self.is_active:
@@ -149,7 +156,7 @@ class BeePopulation:
             self.active_days += 1
 
         # Проверка критического истощения
-        if self.energy_reserves <= 0 or self.starvation_days > self.max_starvation_days:
+        if self.energy_reserves <= 0:
             self.is_alive = False
             self.is_active = False
             self.population = 0
@@ -160,7 +167,7 @@ class BeePopulation:
             self.energy_reserves -= self.population * self.flight_cost
             self.energy_reserves = max(0.0, self.energy_reserves)
             self.starvation_days += 1
-            if self.energy_reserves <= 0 or self.starvation_days > self.max_starvation_days:
+            if self.energy_reserves <= 0:
                 self.is_alive = False
                 self.is_active = False
                 self.population = 0
@@ -173,20 +180,30 @@ class BeePopulation:
             self.starvation_days = 0
 
     def complete_year(self, sync_days):
-        """Расчет размера нового поколения, переживающего зиму."""
+        """Расчет размера нового поколения, переживающего зиму.
+
+        Текущее поколение живет ровно один год, затем заменяется потомством.
+        """
         if self.population <= 0:
             return
 
         pollination_quality = min(1.0, sync_days / 60.0)
         food_quality = min(1.0, self.nectar_collected / (self.population * 60.0))
+        overall_quality = min(pollination_quality, food_quality)
 
-        reproduction_rate = 0.6 + 0.4 * min(pollination_quality, food_quality)
-        winter_loss = 0.2 + (1.0 - pollination_quality) * 0.35 + (1.0 - food_quality) * 0.2
+        # При хорошем кормлении и опылении — рост или стабильность.
+        # При плохом качестве — снижение популяции.
+        reproduction_rate = 0.8 + 0.4 * overall_quality
+        winter_loss = 0.2 * (1.0 - overall_quality)
 
         new_population = int(self.population * reproduction_rate * (1.0 - winter_loss))
         self.population = max(0, new_population)
         if self.population == 0:
             self.is_alive = False
+            return
+
+        # Поколение отмирает после года, а дальше работает только потомство.
+        self.is_alive = True
 
     def reset_for_next_year(self):
         if not self.is_alive:
@@ -202,17 +219,20 @@ class BeePopulation:
 
 if __name__ == "__main__":
     # 1. Инициализация климата и агентов
-    nature = Nature(base_temp=10, amplitude=15, warming_rate=0.2)
-    bees = BeePopulation(initial_population=100, base_activation_temp=9)
+    nature = Nature(base_temp=10, amplitude=15, warming_rate=0.02)
+    bees = BeePopulation(initial_population=100, base_activation_temp=10)
     
-    # Пул флоры (сезонный конвейер из 3 видов)
+    # Пул флоры (сезонный конвейер из 6 видов)
     flora = [
-        Plant("Ранневесенний вид", base_bloom_threshold=10, bloom_duration=80, nectar_amount=400, seasonal_nectar_capacity=8000),
-        Plant("Летнее разнотравье", base_bloom_threshold=11, bloom_duration=100, nectar_amount=600, seasonal_nectar_capacity=15000),
-        Plant("Поздний вид", base_bloom_threshold=13, bloom_duration=70, nectar_amount=500, seasonal_nectar_capacity=10000)
+        Plant("Очень ранний вид", base_bloom_threshold=8, bloom_duration=50, nectar_amount=300, seasonal_nectar_capacity=8000),
+        Plant("Ранневесенний вид", base_bloom_threshold=10, bloom_duration=80, nectar_amount=400, seasonal_nectar_capacity=10000),
+        Plant("Летнее разнотравье", base_bloom_threshold=11, bloom_duration=100, nectar_amount=600, seasonal_nectar_capacity=20000),
+        Plant("Поздний вид", base_bloom_threshold=13, bloom_duration=70, nectar_amount=500, seasonal_nectar_capacity=15000),
+        Plant("Поздне-летний вид", base_bloom_threshold=14, bloom_duration=90, nectar_amount=550, seasonal_nectar_capacity=18000),
+        Plant("Осенний вид", base_bloom_threshold=12, bloom_duration=60, nectar_amount=450, seasonal_nectar_capacity=12000)
     ]
 
-    years_to_simulate = 20
+    years_to_simulate = 100
 
     print("=== СТАРТ СИМУЛЯЦИИ ===\n")
 
