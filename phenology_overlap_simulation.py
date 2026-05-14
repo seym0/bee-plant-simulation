@@ -1,17 +1,34 @@
 """
-Симуляция рассинхронизации цветения растений и активности пчёл на фоне потепления (1950–2050).
+Симуляция рассинхронизации цветения растений и активности пчёл на фоне потепления.
 
-Среднегодовая температурная аномалия T: **0** в 1950–1980 (контрольный период), затем
-линейный рост **(год − 1980) × D_T** только после 1980 г. Старты фенофаз — линейный отклик на T;
-перекрытие фиксированных окон активности задаёт динамику популяций относительно **базового**
-перекрытия в 1980 г. (аномалия T = 0): множитель `overlap / base_overlap` (рост при синхронизации,
-спад при рассинхроне, без верхнего лимита численности).
+Горизонт задаётся константами **START_YEAR** … **END_YEAR** (по умолчанию 1950–2100), шаг — один
+календарный год; результат — `pandas.DataFrame` и опционально график `phenology_overlap_results.png`.
 
-Условные экологические фазы по мере роста T и сдвига стартов:
-(1) пчёлы раньше растений, частичное перекрытие; (2) сближение окон; (3) пик overlap;
-(4) растения «уходят» раньше, overlap падает; (5) коллапс популяций при нулевом перекрытии.
+**Температурная аномалия T** (условные °C), кусочно-линейно по календарному году `y`:
+- при `y <= WARMING_START_YEAR` (1980): **T = 0**;
+- при `1980 < y < ACCELERATION_YEAR` (2010): **T = (y − 1980) × SLOW_WARMING_RATE**, где
+  `SLOW_WARMING_RATE = 0.015` °C/год;
+- с **2010**: **T = (2010 − 1980) × SLOW_WARMING_RATE + (y − 2010) × D_T**, т.е. на стыке 2010 г.
+  величина **0.45** °C и далее рост со скоростью **D_T** (в коде **0.04** °C/год).
 
-Запуск: python3 phenology_overlap_simulation.py
+**Фенофазы:** день старта `day_base + slope × T` (отрицательный `slope` — сдвиг раньше при росте T);
+для пчёл и растений — свои `DAY_*_BASE` и `SLOPE_*`. **Перекрытие** — длина пересечения отрезков
+`[старт, старт + DURATION]` (прямоугольные окна активности, **DURATION = 20** дней).
+
+**Популяции:** базовое перекрытие **base_overlap** берётся при **T = 0** в 1980 г. (как в контрольном
+периоде 1950–1980). Множитель численности **gm = overlap / base_overlap** (с нулём снизу при
+нулевом overlap): при **gm < 1** используется **gm²** (усиленная депрессия при рассинхроне), при
+**gm ≥ 1** — линейный **gm** (рост при синхронизации, без искусственного потолка). Целевые
+численности — начальные популяции × этот множитель; цель растений **0**, если пчёл не осталось.
+Ежегодное обновление — сглаживание `relax_toward` с коэффициентами **POP_RELAXATION_TAU_***;
+сначала обновляются пчёлы, затем растения (растения зависят от численности пчёл до шага).
+
+Типичная интерпретация ряда по overlap и сдвигу стартов: (1) пчёлы раньше растений; (2) сближение
+окон; (3) пик перекрытия; (4) растения уходят раньше, overlap падает; (5) вымирание при обнулении
+перекрытия или популяций.
+
+Запуск: `python3 phenology_overlap_simulation.py` — печать фрагментов таблицы, сводка в консоль,
+сохранение PNG через `plot_simulation_results`.
 """
 
 from __future__ import annotations
@@ -23,17 +40,19 @@ from matplotlib.ticker import MultipleLocator
 
 # --- Параметры климата и горизонта симуляции ---
 START_YEAR = 1950
-END_YEAR = 2050
+END_YEAR = 2100
 N_YEARS = END_YEAR - START_YEAR + 1
-D_T = 0.064  # шаг аномалии на каждый календарный год после WARMING_START_YEAR (коэффициент не меняем)
+D_T = 0.04  # быстрый шаг аномалии после ACCELERATION_YEAR (°C/год; коэффициент не меняем)
 WARMING_START_YEAR = 1980  # до этого года включительно аномалия = 0 (контрольный период)
+ACCELERATION_YEAR = 2010  # переход к стремительному потеплению (стык с умеренной фазой)
+SLOW_WARMING_RATE = 0.015  # °C/год в интервале (1980, 2010)
 
 # --- Линейные фенофазы: day = day_base + slope * T (slope < 0 — раньше при потеплении) ---
-DAY_BEES_BASE = 100
-DAY_PLANTS_BASE = 110
-SLOPE_BEES = -2.6    # день/градус T
-SLOPE_PLANTS = -7.2
-DURATION = 20  # длина окна активности, дней
+DAY_BEES_BASE = 100.0
+DAY_PLANTS_BASE = 105.0   # при T=0 → gap=5 дн., base_overlap=15; синхронизация пик ~2020
+SLOPE_BEES = -2.0    # день/градус T
+SLOPE_PLANTS = -5.2
+DURATION = 20.0  # длина окна активности, дней
 
 # Единая палитра визуализации: пчёлы — оранжевый, растения — зелёный
 COLOR_BEES = "#ff7f0e"
@@ -48,12 +67,16 @@ POP_RELAXATION_TAU_PLANTS = 0.45
 
 def warming_anomaly_for_year(calendar_year: int) -> float:
     """
-    Температурная аномалия (условные °C): 0 в 1950–1980, линейный рост только после 1980.
-    Формула: (год − 1980) * D_T при год > 1980; иначе 0.0.
+    Температурная аномалия (условные °C): кусочно-линейный тренд.
+    До 1980 включительно — 0; 1981–2009 — (год − 1980) * SLOW_WARMING_RATE;
+    с 2010 — 0.45 + (год − 2010) * D_T (на стыке 2010 обе ветки дают 0.45 °C).
     """
     if calendar_year <= WARMING_START_YEAR:
         return 0.0
-    return float(calendar_year - WARMING_START_YEAR) * D_T
+    if calendar_year < ACCELERATION_YEAR:
+        return float(calendar_year - WARMING_START_YEAR) * SLOW_WARMING_RATE
+    anomaly_at_accel = float(ACCELERATION_YEAR - WARMING_START_YEAR) * SLOW_WARMING_RATE
+    return anomaly_at_accel + float(calendar_year - ACCELERATION_YEAR) * D_T
 
 
 def temperature_for_year_index(year_index: int) -> float:
@@ -94,8 +117,13 @@ base_overlap: float = max(overlap_for_calendar_year(WARMING_START_YEAR), 1e-9)
 
 
 def reproduction_factor(current_overlap: float) -> float:
-    """Отношение текущего перекрытия к базовому; на историческом участке = 1.0."""
-    return max(0.0, current_overlap) / base_overlap
+    """
+    Множитель численности: current_overlap / base_overlap.
+    При значении < 1.0 применяется квадратичная депрессия (gm²), усиливая
+    чувствительность к потере синхронизации; при ≥ 1.0 — линейный рост.
+    """
+    gm = max(0.0, current_overlap) / base_overlap
+    return gm ** 2 if gm < 1.0 else gm
 
 
 def relax_toward(current: float, target: float, tau: float) -> float:
@@ -198,14 +226,9 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
     ax_pheno.legend(loc="upper right", fontsize=9)
     ax_pheno.grid(True, alpha=0.3)
     ax_pheno.invert_yaxis()
-    ax_pheno.axvline(
-        WARMING_START_YEAR,
-        color="gray",
-        linestyle="--",
-        linewidth=1.5,
-        alpha=0.85,
-        zorder=1,
-    )
+    for ax in (ax_pheno,):
+        ax.axvline(WARMING_START_YEAR, color="gray", linestyle="--", linewidth=1.4, alpha=0.8, zorder=1)
+        ax.axvline(ACCELERATION_YEAR, color="slategray", linestyle="--", linewidth=1.4, alpha=0.8, zorder=1)
 
     bee_color = COLOR_BEES
     plant_color = COLOR_PLANTS
@@ -219,14 +242,13 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
     ax_pop.grid(True, alpha=0.3)
     ax_pop.set_ylim(bottom=0)
     ax_pop.xaxis.set_major_locator(MultipleLocator(10))
-    ax_pop.axvline(
-        WARMING_START_YEAR,
-        color="gray",
-        linestyle="--",
-        linewidth=1.5,
-        alpha=0.85,
-        zorder=0,
-    )
+    ax_pop.axvline(WARMING_START_YEAR, color="gray", linestyle="--", linewidth=1.4, alpha=0.8, zorder=0)
+    ax_pop.axvline(ACCELERATION_YEAR, color="slategray", linestyle="--", linewidth=1.4, alpha=0.8, zorder=0)
+    _xax_tr = ax_pop.get_xaxis_transform()  # x: данные, y: 0–1 (оси)
+    ax_pop.text(WARMING_START_YEAR + 0.8, 0.04, "1980", fontsize=8, color="gray",
+                va="bottom", transform=_xax_tr)
+    ax_pop.text(ACCELERATION_YEAR + 0.8, 0.04, "2010", fontsize=8, color="slategray",
+                va="bottom", transform=_xax_tr)
 
     ax_plants = ax_pop.twinx()
     ax_plants.plot(
@@ -241,7 +263,7 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
     ax_pop.legend(h1 + h2, l1 + l2, loc="upper right", fontsize=9)
 
     fig.suptitle(
-        "Рассинхронизация пчёл и растений при линейном потеплении (модель перекрытия фенофаз)",
+        "Рассинхронизация пчёл и растений при многофазном потеплении (модель перекрытия фенофаз)",
         fontsize=13,
         y=0.98,
     )

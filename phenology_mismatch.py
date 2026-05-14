@@ -1,7 +1,7 @@
 """
 Интерактивный дашборд Streamlit + Plotly для модели перекрытия фенофаз (phenology_overlap_simulation).
 
-Запуск: streamlit run app.py
+Запуск: streamlit run phenology_mismatch.py
 """
 
 from __future__ import annotations
@@ -30,6 +30,28 @@ PHENO_SIGMA_DAYS = 20.0 / (2.0 * 1.96)
 SPRING_DAY_MIN = 60
 SPRING_DAY_MAX = 160
 SPRING_RESOLUTION = 400
+
+DEFAULT_MISMATCH_GIF = "phenology_mismatch.gif"
+
+
+def next_available_gif_path(path: str | Path) -> Path:
+    """
+    Путь для записи GIF: как задано, если файла ещё нет; иначе stem_1, stem_2, … перед суффиксом.
+    Относительные имена разрешаются относительно текущего каталога (как при запуске Streamlit).
+    """
+    path = Path(path)
+    if not path.is_absolute():
+        path = Path.cwd() / path.name
+    if not path.exists():
+        return path
+    parent = path.parent
+    stem = path.stem
+    suffix = path.suffix
+    for n in range(1, 100_000):
+        candidate = parent / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+    raise OSError("Не удалось подобрать свободное имя для GIF")
 
 
 @st.cache_data
@@ -84,7 +106,8 @@ def ecological_stage(row: pd.Series, df: pd.DataFrame, year_idx: int) -> tuple[i
             "Одна из популяций уничтожена; система неустойчива.",
         )
 
-    if gap >= 5.0 and cur_idx <= max(0, idx_max - 3) and ov < 0.75 * max_ov:
+    # При T≈0 перекрытие ~15 дн., max_ov≈20 — порог 0.75*max отсекает все ранние годы.
+    if gap >= 5.0 and cur_idx <= max(0, idx_max - 3) and ov < 0.80 * max_ov:
         return (
             1,
             "Историческое опережение пчёл",
@@ -228,6 +251,14 @@ def figure_population_timeseries(df: pd.DataFrame) -> go.Figure:
         annotation_text="1980 — начало учёта потепления",
         annotation_position="top",
     )
+    fig.add_vline(
+        x=sim.ACCELERATION_YEAR,
+        line_dash="dash",
+        line_color="rgba(80,80,80,0.85)",
+        line_width=2,
+        annotation_text="2010",
+        annotation_position="bottom",
+    )
     fig.update_layout(
         title="Динамика популяций за весь горизонт симуляции",
         template="plotly_white",
@@ -243,7 +274,7 @@ def figure_population_timeseries(df: pd.DataFrame) -> go.Figure:
 
 def export_animation_gif(
     df: pd.DataFrame,
-    path: str | Path = "phenology_mismatch.gif",
+    path: str | Path = DEFAULT_MISMATCH_GIF,
     sigma: float = PHENO_SIGMA_DAYS,
     fps: int = 3,
 ) -> Path:
@@ -251,7 +282,7 @@ def export_animation_gif(
     Анимация главного графика перекрытия гауссовых пиков по годам (matplotlib + pillow).
     Сохраняет GIF для вставки в презентацию.
     """
-    path = Path(path)
+    path = next_available_gif_path(path)
     x = np.linspace(SPRING_DAY_MIN, SPRING_DAY_MAX, SPRING_RESOLUTION)
     fig, ax = plt.subplots(figsize=(9, 5.2), dpi=100)
     plt.rcParams["font.family"] = "DejaVu Sans"
@@ -325,22 +356,22 @@ def main() -> None:
 
         st.divider()
         st.subheader("Экспорт для слайдов")
-        if st.button("Сгенерировать phenology_mismatch.gif", type="primary"):
+        if st.button(f"Сгенерировать {DEFAULT_MISMATCH_GIF}", type="primary"):
             with st.spinner("Рендер анимации (может занять 1–2 минуты)…"):
-                out = export_animation_gif(df, path="phenology_mismatch.gif", fps=3)
+                out = export_animation_gif(df, path=DEFAULT_MISMATCH_GIF, fps=3)
             st.success(f"Сохранено в папке проекта: `{out.resolve()}`")
             if out.exists():
                 st.download_button(
-                    label="Скачать phenology_mismatch.gif",
+                    label=f"Скачать {out.name}",
                     data=out.read_bytes(),
-                    file_name="phenology_mismatch.gif",
+                    file_name=out.name,
                     mime="image/gif",
                     key="dl_phenology_gif",
                 )
 
     x = np.linspace(SPRING_DAY_MIN, SPRING_DAY_MAX, SPRING_RESOLUTION)
     fig_main = figure_overlap_year(row, x)
-    st.plotly_chart(fig_main, use_container_width=True)
+    st.plotly_chart(fig_main, width="stretch")
 
     t_anom = float(row["Температура"])
     ov = float(row["Перекрытие_Дней"])
@@ -374,7 +405,7 @@ border-left:6px solid #3949ab;margin-top:12px;">
 
     st.divider()
     st.subheader("Общая динамика популяций")
-    st.plotly_chart(figure_population_timeseries(df), use_container_width=True)
+    st.plotly_chart(figure_population_timeseries(df), width="stretch")
 
     with st.expander("Как читать гауссовы кривые"):
         st.markdown(
