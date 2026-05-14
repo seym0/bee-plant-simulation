@@ -4,6 +4,10 @@
 Среднегодовая температура T растёт линейно от 0. Старты фенофаз — линейный отклик на T;
 перекрытие фиксированных окон активности задаёт success_rate и демографию популяций.
 
+Демография пчёл ограничена по годовому множителю (без «взрыва» при высоком overlap), климатический
+шаг dT умеренный — чтобы к ~2030 система ещё выглядела жизнеспособной, а риск коллапса уходил
+в конец горизонта (сценарий будущего, а не настоящего 2026).
+
 Условные экологические фазы по мере роста T и сдвига стартов:
 (1) пчёлы раньше растений, частичное перекрытие; (2) сближение окон; (3) пик overlap;
 (4) растения «уходят» раньше, overlap падает; (5) коллапс популяций при нулевом перекрытии.
@@ -22,7 +26,7 @@ from matplotlib.ticker import MultipleLocator
 START_YEAR = 1950
 END_YEAR = 2050
 N_YEARS = END_YEAR - START_YEAR + 1
-D_T = 0.1  # прирост среднегодовой T за год (условные единицы)
+D_T = 0.064  # к 2050 T≈6.4 — окна почти не пересекаются; до ~2030 перекрытие ещё ощутимое
 
 # --- Линейные фенофазы: day = day_base + slope * T (slope < 0 — раньше при потеплении) ---
 DAY_BEES_BASE = 100
@@ -31,18 +35,28 @@ SLOPE_BEES = -2.6    # день/градус T
 SLOPE_PLANTS = -7.2
 DURATION = 20  # длина окна активности, дней
 
-# --- Демография пчёл: pop(t+1) = pop(t) * max(0, base_reproduction_bees * success_rate - mortality_rate) ---
+# Единая палитра визуализации: пчёлы — оранжевый, растения — зелёный
+COLOR_BEES = "#ff7f0e"
+COLOR_PLANTS = "#2ca02c"
+
+# --- Демография пчёл (от success_rate; без сверхэкспоненциального роста) ---
 POP_BEES_INITIAL = 1000
-BASE_REPRODUCTION_BEES = 3.0
-MORTALITY_RATE_BEES = 0.55
+BASE_REPRODUCTION_BEES = 2.35
+MORTALITY_RATE_BEES = 0.52
+# «Сырой» множитель = BASE * success - MORT; при >0 ограничиваем сверху, при <=0 — мягкий спад
+BEE_YEAR_MULT_CAP = 1.045
+BEE_YEAR_MULT_STRESS = 0.88
+BEE_COLLAPSE_MULT = 0.80  # при нулевом перекрытии сезона
+BEE_VERY_LOW_SUCCESS = 0.18  # ниже — дополнительный стресс (редкий нектар)
+BEE_VERY_LOW_MULT = 0.84
 
 # --- Демография растений: многолетники; семена при успешном опылении; без пчёл — быстрая деградация ---
 POP_PLANTS_INITIAL = 10000
 PLANT_SURVIVAL = 0.92
-PLANT_FECUNDITY = 0.18
-PLANT_DECAY_WITHOUT_BEES = 0.62
+PLANT_FECUNDITY = 0.10
+PLANT_DECAY_WITHOUT_BEES = 0.80
 PLANT_STRESS_NO_OVERLAP = 0.88
-PLANT_EXTINCTION_THRESHOLD = 30.0
+PLANT_EXTINCTION_THRESHOLD = 8.0
 
 
 def temperature_for_year_index(year_index: int) -> float:
@@ -70,8 +84,17 @@ def success_rate_from_overlap(overlap: float, duration: float) -> float:
 
 
 def update_bee_population(pop_bees: float, success: float) -> float:
-    growth = BASE_REPRODUCTION_BEES * success - MORTALITY_RATE_BEES
-    return max(0.0, pop_bees * max(0.0, growth))
+    if success <= 0:
+        mult = BEE_COLLAPSE_MULT
+    else:
+        raw = BASE_REPRODUCTION_BEES * success - MORTALITY_RATE_BEES
+        if raw <= 0:
+            mult = BEE_YEAR_MULT_STRESS
+        else:
+            mult = min(BEE_YEAR_MULT_CAP, max(0.88, raw))
+        if success < BEE_VERY_LOW_SUCCESS:
+            mult = min(mult, BEE_VERY_LOW_MULT)
+    return max(0.0, pop_bees * mult)
 
 
 def update_plant_population(pop_plants: float, success: float, pop_bees: float) -> float:
@@ -129,14 +152,14 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
     ax_pheno.plot(
         df["Год"],
         df["Старт_Пчел"],
-        color="#1f77b4",
+        color=COLOR_BEES,
         linewidth=2.2,
         label="Старт активности пчёл",
     )
     ax_pheno.plot(
         df["Год"],
         df["Старт_Растений"],
-        color="#2ca02c",
+        color=COLOR_PLANTS,
         linewidth=2.2,
         label="Старт цветения растений",
     )
@@ -144,7 +167,7 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
         df["Год"],
         df["Старт_Пчел"],
         df["Старт_Пчел"] + DURATION,
-        color="#1f77b4",
+        color=COLOR_BEES,
         alpha=0.12,
         label=f"Окно пчёл (+{DURATION} дн.)",
     )
@@ -152,7 +175,7 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
         df["Год"],
         df["Старт_Растений"],
         df["Старт_Растений"] + DURATION,
-        color="#2ca02c",
+        color=COLOR_PLANTS,
         alpha=0.12,
         label=f"Окно растений (+{DURATION} дн.)",
     )
@@ -162,8 +185,8 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
     ax_pheno.grid(True, alpha=0.3)
     ax_pheno.invert_yaxis()
 
-    bee_color = "#ff7f0e"
-    plant_color = "#9467bd"
+    bee_color = COLOR_BEES
+    plant_color = COLOR_PLANTS
     ax_pop.plot(df["Год"], df["Популяция_Пчел"], color=bee_color, linewidth=2.0, label="Пчёлы")
     ax_pop.set_ylabel("Пчёлы (усл. ед.)", color=bee_color, fontweight="bold")
     ax_pop.tick_params(axis="y", labelcolor=bee_color)
