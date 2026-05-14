@@ -371,7 +371,7 @@ def main() -> None:
 
     x = np.linspace(SPRING_DAY_MIN, SPRING_DAY_MAX, SPRING_RESOLUTION)
     fig_main = figure_overlap_year(row, x)
-    st.plotly_chart(fig_main, width="stretch")
+    st.plotly_chart(fig_main, use_container_width=True)
 
     t_anom = float(row["Температура"])
     ov = float(row["Перекрытие_Дней"])
@@ -405,7 +405,7 @@ border-left:6px solid #3949ab;margin-top:12px;">
 
     st.divider()
     st.subheader("Общая динамика популяций")
-    st.plotly_chart(figure_population_timeseries(df), width="stretch")
+    st.plotly_chart(figure_population_timeseries(df), use_container_width=True)
 
     with st.expander("Как читать гауссовы кривые"):
         st.markdown(
