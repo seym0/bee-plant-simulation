@@ -1,12 +1,11 @@
 """
 Симуляция рассинхронизации цветения растений и активности пчёл на фоне потепления (1950–2050).
 
-Среднегодовая температура T растёт линейно от 0. Старты фенофаз — линейный отклик на T;
-перекрытие фиксированных окон активности задаёт success_rate и демографию популяций.
-
-Демография пчёл ограничена по годовому множителю (без «взрыва» при высоком overlap), климатический
-шаг dT умеренный — чтобы к ~2030 система ещё выглядела жизнеспособной, а риск коллапса уходил
-в конец горизонта (сценарий будущего, а не настоящего 2026).
+Среднегодовая температурная аномалия T: **0** в 1950–1980 (контрольный период), затем
+линейный рост **(год − 1980) × D_T** только после 1980 г. Старты фенофаз — линейный отклик на T;
+перекрытие фиксированных окон активности задаёт динамику популяций относительно **базового**
+перекрытия в 1980 г. (аномалия T = 0): множитель `overlap / base_overlap` (рост при синхронизации,
+спад при рассинхроне, без верхнего лимита численности).
 
 Условные экологические фазы по мере роста T и сдвига стартов:
 (1) пчёлы раньше растений, частичное перекрытие; (2) сближение окон; (3) пик overlap;
@@ -26,7 +25,8 @@ from matplotlib.ticker import MultipleLocator
 START_YEAR = 1950
 END_YEAR = 2050
 N_YEARS = END_YEAR - START_YEAR + 1
-D_T = 0.064  # к 2050 T≈6.4 — окна почти не пересекаются; до ~2030 перекрытие ещё ощутимое
+D_T = 0.064  # шаг аномалии на каждый календарный год после WARMING_START_YEAR (коэффициент не меняем)
+WARMING_START_YEAR = 1980  # до этого года включительно аномалия = 0 (контрольный период)
 
 # --- Линейные фенофазы: day = day_base + slope * T (slope < 0 — раньше при потеплении) ---
 DAY_BEES_BASE = 100
@@ -39,29 +39,27 @@ DURATION = 20  # длина окна активности, дней
 COLOR_BEES = "#ff7f0e"
 COLOR_PLANTS = "#2ca02c"
 
-# --- Демография пчёл (от success_rate; без сверхэкспоненциального роста) ---
+# --- Популяции: отношение перекрытия к базовому (1980, T=0) ---
 POP_BEES_INITIAL = 1000
-BASE_REPRODUCTION_BEES = 2.35
-MORTALITY_RATE_BEES = 0.52
-# «Сырой» множитель = BASE * success - MORT; при >0 ограничиваем сверху, при <=0 — мягкий спад
-BEE_YEAR_MULT_CAP = 1.045
-BEE_YEAR_MULT_STRESS = 0.88
-BEE_COLLAPSE_MULT = 0.80  # при нулевом перекрытии сезона
-BEE_VERY_LOW_SUCCESS = 0.18  # ниже — дополнительный стресс (редкий нектар)
-BEE_VERY_LOW_MULT = 0.84
-
-# --- Демография растений: многолетники; семена при успешном опылении; без пчёл — быстрая деградация ---
 POP_PLANTS_INITIAL = 10000
-PLANT_SURVIVAL = 0.92
-PLANT_FECUNDITY = 0.10
-PLANT_DECAY_WITHOUT_BEES = 0.80
-PLANT_STRESS_NO_OVERLAP = 0.88
-PLANT_EXTINCTION_THRESHOLD = 8.0
+POP_RELAXATION_TAU_BEES = 0.55  # сглаженное стремление к целевой численности за год
+POP_RELAXATION_TAU_PLANTS = 0.45
+
+
+def warming_anomaly_for_year(calendar_year: int) -> float:
+    """
+    Температурная аномалия (условные °C): 0 в 1950–1980, линейный рост только после 1980.
+    Формула: (год − 1980) * D_T при год > 1980; иначе 0.0.
+    """
+    if calendar_year <= WARMING_START_YEAR:
+        return 0.0
+    return float(calendar_year - WARMING_START_YEAR) * D_T
 
 
 def temperature_for_year_index(year_index: int) -> float:
-    """Среднегодовая T: 0 в первый год, +dT каждый следующий."""
-    return year_index * D_T
+    """Оставлено для совместимости: аномалия по индексу года симуляции (0 = START_YEAR)."""
+    y = START_YEAR + year_index
+    return warming_anomaly_for_year(y)
 
 
 def phenology_start_day(day_base: float, slope: float, t: float) -> float:
@@ -83,31 +81,48 @@ def success_rate_from_overlap(overlap: float, duration: float) -> float:
     return max(0.0, min(1.0, overlap / duration))
 
 
-def update_bee_population(pop_bees: float, success: float) -> float:
-    if success <= 0:
-        mult = BEE_COLLAPSE_MULT
-    else:
-        raw = BASE_REPRODUCTION_BEES * success - MORTALITY_RATE_BEES
-        if raw <= 0:
-            mult = BEE_YEAR_MULT_STRESS
-        else:
-            mult = min(BEE_YEAR_MULT_CAP, max(0.88, raw))
-        if success < BEE_VERY_LOW_SUCCESS:
-            mult = min(mult, BEE_VERY_LOW_MULT)
-    return max(0.0, pop_bees * mult)
+def overlap_for_calendar_year(calendar_year: int) -> float:
+    """Дни перекрытия окон для заданного календарного года."""
+    t = warming_anomaly_for_year(calendar_year)
+    db = phenology_start_day(DAY_BEES_BASE, SLOPE_BEES, t)
+    dp = phenology_start_day(DAY_PLANTS_BASE, SLOPE_PLANTS, t)
+    return overlap_days(db, dp, DURATION)
 
 
-def update_plant_population(pop_plants: float, success: float, pop_bees: float) -> float:
-    if pop_bees <= 0:
-        multiplier = PLANT_DECAY_WITHOUT_BEES
-    elif success <= 0:
-        multiplier = PLANT_STRESS_NO_OVERLAP
-    else:
-        multiplier = PLANT_SURVIVAL + PLANT_FECUNDITY * success
-    next_pop = max(0.0, pop_plants * multiplier)
-    if next_pop < PLANT_EXTINCTION_THRESHOLD:
+# Базовое перекрытие при T = 0 в 1980 г. (контрольный период 1950–1980 — то же перекрытие)
+base_overlap: float = max(overlap_for_calendar_year(WARMING_START_YEAR), 1e-9)
+
+
+def reproduction_factor(current_overlap: float) -> float:
+    """Отношение текущего перекрытия к базовому; на историческом участке = 1.0."""
+    return max(0.0, current_overlap) / base_overlap
+
+
+def relax_toward(current: float, target: float, tau: float) -> float:
+    t = min(1.0, max(0.0, tau))
+    return max(0.0, current + t * (target - current))
+
+
+def target_bee_population(current_overlap: float) -> float:
+    """Целевая численность пчёл: baseline × (overlap/base)."""
+    return POP_BEES_INITIAL * reproduction_factor(current_overlap)
+
+
+def target_plant_population(current_overlap: float, bees_alive: float) -> float:
+    """Целевая численность растений: тот же множитель по перекрытию; без пчёл — 0."""
+    if bees_alive <= 0:
         return 0.0
-    return next_pop
+    return POP_PLANTS_INITIAL * reproduction_factor(current_overlap)
+
+
+def update_bee_population(pop_bees: float, current_overlap: float) -> float:
+    tgt = target_bee_population(current_overlap)
+    return relax_toward(pop_bees, tgt, POP_RELAXATION_TAU_BEES)
+
+
+def update_plant_population(pop_plants: float, current_overlap: float, pop_bees: float) -> float:
+    tgt = target_plant_population(current_overlap, pop_bees)
+    return relax_toward(pop_plants, tgt, POP_RELAXATION_TAU_PLANTS)
 
 
 def run_simulation() -> pd.DataFrame:
@@ -117,11 +132,14 @@ def run_simulation() -> pd.DataFrame:
 
     for i in range(N_YEARS):
         year = START_YEAR + i
-        t = temperature_for_year_index(i)
+        t = warming_anomaly_for_year(year)
         day_bees = phenology_start_day(DAY_BEES_BASE, SLOPE_BEES, t)
         day_plants = phenology_start_day(DAY_PLANTS_BASE, SLOPE_PLANTS, t)
         ov = overlap_days(day_bees, day_plants, DURATION)
-        success = success_rate_from_overlap(ov, DURATION)
+
+        bees_before = pop_bees
+        pop_bees = update_bee_population(pop_bees, ov)
+        pop_plants = update_plant_population(pop_plants, ov, bees_before)
 
         rows.append(
             {
@@ -134,10 +152,6 @@ def run_simulation() -> pd.DataFrame:
                 "Популяция_Растений": pop_plants,
             }
         )
-
-        bees_this_season = pop_bees
-        pop_bees = update_bee_population(pop_bees, success)
-        pop_plants = update_plant_population(pop_plants, success, bees_this_season)
 
     return pd.DataFrame(rows)
 
@@ -184,6 +198,14 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
     ax_pheno.legend(loc="upper right", fontsize=9)
     ax_pheno.grid(True, alpha=0.3)
     ax_pheno.invert_yaxis()
+    ax_pheno.axvline(
+        WARMING_START_YEAR,
+        color="gray",
+        linestyle="--",
+        linewidth=1.5,
+        alpha=0.85,
+        zorder=1,
+    )
 
     bee_color = COLOR_BEES
     plant_color = COLOR_PLANTS
@@ -191,10 +213,20 @@ def plot_simulation_results(df: pd.DataFrame, output_file: str = "phenology_over
     ax_pop.set_ylabel("Пчёлы (усл. ед.)", color=bee_color, fontweight="bold")
     ax_pop.tick_params(axis="y", labelcolor=bee_color)
     ax_pop.set_xlabel("Год")
-    ax_pop.set_title("Популяции: падение при низком перекрытии и вымирании опылителей")
+    ax_pop.set_title(
+        "Популяции"
+    )
     ax_pop.grid(True, alpha=0.3)
     ax_pop.set_ylim(bottom=0)
     ax_pop.xaxis.set_major_locator(MultipleLocator(10))
+    ax_pop.axvline(
+        WARMING_START_YEAR,
+        color="gray",
+        linestyle="--",
+        linewidth=1.5,
+        alpha=0.85,
+        zorder=0,
+    )
 
     ax_plants = ax_pop.twinx()
     ax_plants.plot(

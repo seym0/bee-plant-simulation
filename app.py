@@ -220,6 +220,14 @@ def figure_population_timeseries(df: pd.DataFrame) -> go.Figure:
         ),
         secondary_y=True,
     )
+    fig.add_vline(
+        x=sim.WARMING_START_YEAR,
+        line_dash="dash",
+        line_color="rgba(80,80,80,0.85)",
+        line_width=2,
+        annotation_text="1980 — начало учёта потепления",
+        annotation_position="top",
+    )
     fig.update_layout(
         title="Динамика популяций за весь горизонт симуляции",
         template="plotly_white",
