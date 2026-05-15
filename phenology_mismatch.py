@@ -208,15 +208,26 @@ def figure_overlap_year(
     )
 
     fig.update_layout(
-        title=f"Весенние фенофазы (год {int(row['Год'])}) — нормализованная активность",
+        title=dict(
+            text=f"Весенние фенофазы — {int(row['Год'])} г.",
+            font=dict(size=14),
+            x=0.5,
+            xanchor="center",
+        ),
         xaxis_title="День года (весенний сегмент)",
         yaxis_title="Интенсивность (0–1)",
         yaxis=dict(range=[0, 1.05]),
         xaxis=dict(range=[SPRING_DAY_MIN, SPRING_DAY_MAX]),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.28,
+            xanchor="center",
+            x=0.5,
+        ),
         template="plotly_white",
-        height=480,
-        margin=dict(t=60, b=50),
+        height=360,
+        margin=dict(t=48, b=95, l=50, r=25),
     )
     return fig
 

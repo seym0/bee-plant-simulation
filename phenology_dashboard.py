@@ -63,7 +63,18 @@ def figure_overlap_year_with_species_icons(row: pd.Series, x: np.ndarray) -> go.
         xanchor="center",
         yanchor="bottom",
     )
-    fig.update_layout(yaxis=dict(range=[0, 1.14]), margin=dict(t=72, b=50))
+    fig.update_layout(
+        yaxis=dict(range=[0, 1.14]),
+        height=360,
+        margin=dict(t=48, b=95, l=50, r=25),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.28,
+            xanchor="center",
+            x=0.5,
+        ),
+    )
     return fig
 
 
@@ -98,6 +109,25 @@ def render_d_t_slider() -> float:
     )
 
 
+def inject_compact_styles() -> None:
+    st.markdown(
+        """
+<style>
+.dashboard-title {
+    font-size: 1.35rem;
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 0 0 0.5rem 0;
+}
+@media (max-width: 640px) {
+    .dashboard-title { font-size: 1.05rem; }
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Пчёлы и растения: фенология",
@@ -106,7 +136,13 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
 
-    st.title("Моделирование (рас)синхронизации активности пчел и цветения растений")
+    inject_compact_styles()
+    st.markdown(
+        '<p class="dashboard-title">'
+        "Моделирование (рас)синхронизации активности пчёл и цветения растений"
+        "</p>",
+        unsafe_allow_html=True,
+    )
     # st.caption(
     #     "Сверху — сдвиг гауссовых кривых по годам при сценарии из `phenology_overlap_simulation` "
     #     f"(базовый D_T = {sim.D_T:.3f} °C/год после 2010). "

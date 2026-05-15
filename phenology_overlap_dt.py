@@ -219,7 +219,7 @@ def figure_overlap_results_plotly(df: pd.DataFrame, d_t: float) -> go.Figure:
         row_heights=[0.52, 0.48],
         specs=[[{}], [{"secondary_y": True}]],
         subplot_titles=(
-            "Фенология: сближение окон при потеплении и последующее расхождение",
+            "Фенология: сближение и расхождение окон",
             "Популяции",
         ),
     )
@@ -378,21 +378,35 @@ def figure_overlap_results_plotly(df: pd.DataFrame, d_t: float) -> go.Figure:
     )
     fig.update_xaxes(title_text="Год", row=2, col=1, dtick=10)
 
+    # Заголовок блока — в st.subheader дашборда; здесь только подпись сценария (без длинного title).
     fig.update_layout(
-        title=dict(
-            text=(
-                "Рассинхронизация пчёл и растений при многофазном потеплении<br>"
-                f"<sup>D_T = {d_t:.3f} °C/год после {sim.ACCELERATION_YEAR} г.</sup>"
-            ),
-            x=0.5,
-            xanchor="center",
-        ),
         template="plotly_white",
-        height=720,
+        height=620,
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=100, b=50),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.06,
+            xanchor="center",
+            x=0.5,
+        ),
+        margin=dict(t=70, b=110, l=55, r=55),
+        annotations=[
+            *list(fig.layout.annotations),
+            dict(
+                text=f"D_T = {d_t:.3f} °C/год (после {sim.ACCELERATION_YEAR} г.)",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=1.02,
+                xanchor="center",
+                yanchor="bottom",
+                showarrow=False,
+                font=dict(size=11, color="#555"),
+            ),
+        ],
     )
+    fig.update_annotations(font_size=11)
 
     return fig
 
