@@ -13,11 +13,11 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 import phenology_mismatch as pm
 import phenology_overlap_dt as podt
-import phenology_overlap_simulation as sim
 
 
 def first_year_at_or_below(df: pd.DataFrame, col: str, threshold: float = 1.0) -> int | None:
@@ -25,6 +25,47 @@ def first_year_at_or_below(df: pd.DataFrame, col: str, threshold: float = 1.0) -
     if sub.empty:
         return None
     return int(sub["Год"].iloc[0])
+
+
+def figure_overlap_year_with_species_icons(row: pd.Series, x: np.ndarray) -> go.Figure:
+    """
+    График перекрытия как в phenology_mismatch, с эмодзи на пиках гауссиан пчёл и растений.
+    """
+    fig = pm.figure_overlap_year(row, x)
+    mu_b = float(row["Старт_Пчел"])
+    mu_p = float(row["Старт_Растений"])
+    gap = abs(mu_p - mu_b)
+    if gap < 2.5:
+        bee_xshift, plant_xshift = -24, 24
+    elif gap < 8:
+        bee_xshift, plant_xshift = -16, 16
+    else:
+        bee_xshift, plant_xshift = 0, 0
+
+    fig.add_annotation(
+        x=mu_b,
+        y=1.0,
+        text="🐝",
+        showarrow=False,
+        xshift=bee_xshift,
+        yshift=18,
+        font=dict(size=28),
+        xanchor="center",
+        yanchor="bottom",
+    )
+    fig.add_annotation(
+        x=mu_p,
+        y=1.0,
+        text="🌸",
+        showarrow=False,
+        xshift=plant_xshift,
+        yshift=18,
+        font=dict(size=28),
+        xanchor="center",
+        yanchor="bottom",
+    )
+    fig.update_layout(yaxis=dict(range=[0, 1.14]), margin=dict(t=72, b=50))
+    return fig
 
 
 def main() -> None:
@@ -60,12 +101,12 @@ def main() -> None:
             min(1.0, year_idx / max(1, n - 1)),
             text=f"Год {int(row['Год'])} ({year_idx + 1} / {n})",
         )
-        st.caption(
-            f"Календарный год: **{int(row['Год'])}** · T′: **{row['Температура']:.2f}** (усл. °C)"
-        )
+        # st.caption(
+        #     f"Календарный год: **{int(row['Год'])}**"
+        # )
 
         st.divider()
-        st.subheader("Скорость потепления после 2010")
+        st.subheader("Скорость потепления")
         d_t = st.slider(
             "D_T (°C/год)",
             min_value=float(podt.DT_MIN),
@@ -73,13 +114,13 @@ def main() -> None:
             value=float(podt.DT_DEFAULT),
             step=0.005,
             format="%.3f",
-            help="Влияет только на нижний блок (пересчёт всего ряда симуляции).",
+            help="Влияет только на нижний график.",
         )
 
     # --- Блок 1: перекрытие по выбранному году (Plotly) ---
     st.subheader("1. Перекрытие фенофаз в выбранный год")
     x = np.linspace(pm.SPRING_DAY_MIN, pm.SPRING_DAY_MAX, pm.SPRING_RESOLUTION)
-    st.plotly_chart(pm.figure_overlap_year(row, x), use_container_width=True)
+    st.plotly_chart(figure_overlap_year_with_species_icons(row, x), use_container_width=True)
 
     t_anom = float(row["Температура"])
     ov = float(row["Перекрытие_Дней"])
@@ -88,8 +129,8 @@ def main() -> None:
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("T′ (аномалия)", f"{t_anom:.2f} °C")
     m2.metric("Дней перекрытия", f"{ov:.1f}")
-    m3.metric("Пчёлы (усл.)", f"{pb:.3g}")
-    m4.metric("Растения (усл.)", f"{pp:.3g}")
+    m3.metric("Популяция пчёл", f"{pb:.3g}")
+    m4.metric("Популяция растений", f"{pp:.3g}")
 
     stage_num, stage_title, stage_desc = pm.ecological_stage(row, df_year, year_idx)
     palette = {
@@ -123,12 +164,12 @@ border-left:6px solid #3949ab;margin-top:12px;">
     y_plants = first_year_at_or_below(df_dt, "Популяция_Растений")
     c1, c2, c3 = st.columns(3)
     c1.metric("D_T", f"{d_t:.3f} °C/год")
-    c2.metric("Первый год: пчёлы ≤ 1", "—" if y_bees is None else str(y_bees))
-    c3.metric("Первый год: растения ≤ 1", "—" if y_plants is None else str(y_plants))
+    c2.metric("В каком году популяция пчёл станет меньше 1", "—" if y_bees is None else str(y_bees))
+    c3.metric("В каком году популяция растений станет меньше 1", "—" if y_plants is None else str(y_plants))
 
     st.divider()
-    st.subheader("Динамика популяций (базовый сценарий модуля)")
-    st.caption("Ряд при фиксированном D_T из `phenology_overlap_simulation.py` (для сравнения с блоком 1).")
+    st.subheader("Динамика популяций (базовый сценарий при D_T = 0.04 °C/год)")  
+    # st.caption("Ряд при фиксированном D_T из `phenology_overlap_simulation.py` (для сравнения с блоком 1).")
     st.plotly_chart(pm.figure_population_timeseries(df_year), use_container_width=True)
 
 #     with st.expander("Как читать графики"):
