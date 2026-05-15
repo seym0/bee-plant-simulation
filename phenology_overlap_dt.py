@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from PIL import Image
 import streamlit as st
 
@@ -191,6 +193,207 @@ def figure_overlap_results(df: pd.DataFrame, d_t: float) -> plt.Figure:
         y=0.98,
     )
     fig.tight_layout()
+    return fig
+
+
+def _hex_rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def figure_overlap_results_plotly(df: pd.DataFrame, d_t: float) -> go.Figure:
+    """
+    Те же два блока, что figure_overlap_results, в интерактивном Plotly (hover, zoom).
+    """
+    years = df["Год"]
+    y_lo, y_hi = fixed_phenology_ylim()
+    bee_fill = _hex_rgba(sim.COLOR_BEES, 0.12)
+    plant_fill = _hex_rgba(sim.COLOR_PLANTS, 0.12)
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        row_heights=[0.52, 0.48],
+        specs=[[{}], [{"secondary_y": True}]],
+        subplot_titles=(
+            "Фенология: сближение окон при потеплении и последующее расхождение",
+            "Популяции",
+        ),
+    )
+
+    # Окна активности (заливка)
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Старт_Пчел"],
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Старт_Пчел"] + sim.DURATION,
+            mode="lines",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor=bee_fill,
+            name=f"Окно пчёл (+{sim.DURATION} дн.)",
+            hovertemplate="Год %{x}<br>окно %{customdata[0]:.0f}–%{customdata[1]:.0f} дн.<extra></extra>",
+            customdata=np.column_stack([df["Старт_Пчел"], df["Старт_Пчел"] + sim.DURATION]),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Старт_Растений"],
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Старт_Растений"] + sim.DURATION,
+            mode="lines",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor=plant_fill,
+            name=f"Окно растений (+{sim.DURATION} дн.)",
+            hovertemplate="Год %{x}<br>окно %{customdata[0]:.0f}–%{customdata[1]:.0f} дн.<extra></extra>",
+            customdata=np.column_stack([df["Старт_Растений"], df["Старт_Растений"] + sim.DURATION]),
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Старт_Пчел"],
+            mode="lines",
+            name="Старт активности пчёл",
+            line=dict(color=sim.COLOR_BEES, width=2.2),
+            hovertemplate="Год %{x}<br>день %{y:.1f}<extra>Пчёлы</extra>",
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Старт_Растений"],
+            mode="lines",
+            name="Старт цветения растений",
+            line=dict(color=sim.COLOR_PLANTS, width=2.2),
+            hovertemplate="Год %{x}<br>день %{y:.1f}<extra>Растения</extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Популяция_Пчел"],
+            mode="lines",
+            name="Пчёлы",
+            line=dict(color=sim.COLOR_BEES, width=2.0),
+            hovertemplate="Год %{x}<br>%{y:.3g} усл. ед.<extra>Пчёлы</extra>",
+        ),
+        row=2,
+        col=1,
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=df["Популяция_Растений"],
+            mode="lines",
+            name="Растения",
+            line=dict(color=sim.COLOR_PLANTS, width=2.0),
+            hovertemplate="Год %{x}<br>%{y:.3g} усл. ед.<extra>Растения</extra>",
+        ),
+        row=2,
+        col=1,
+        secondary_y=True,
+    )
+
+    for row in (1, 2):
+        fig.add_vline(
+            x=sim.WARMING_START_YEAR,
+            line_dash="dash",
+            line_color="rgba(128,128,128,0.85)",
+            line_width=1.4,
+            row=row,
+            col=1,
+        )
+        fig.add_vline(
+            x=sim.ACCELERATION_YEAR,
+            line_dash="dash",
+            line_color="rgba(112,128,144,0.85)",
+            line_width=1.4,
+            row=row,
+            col=1,
+        )
+
+    fig.update_yaxes(
+        title_text="День года",
+        range=[y_lo, y_hi],
+        autorange=False,
+        row=1,
+        col=1,
+    )
+    fig.update_yaxes(autorange="reversed", row=1, col=1)
+    fig.update_yaxes(
+        title_text="Пчёлы (усл. ед.)",
+        rangemode="tozero",
+        row=2,
+        col=1,
+        secondary_y=False,
+        title_font=dict(color=sim.COLOR_BEES),
+        tickfont=dict(color=sim.COLOR_BEES),
+    )
+    fig.update_yaxes(
+        title_text="Растения (усл. ед.)",
+        rangemode="tozero",
+        row=2,
+        col=1,
+        secondary_y=True,
+        title_font=dict(color=sim.COLOR_PLANTS),
+        tickfont=dict(color=sim.COLOR_PLANTS),
+    )
+    fig.update_xaxes(title_text="Год", row=2, col=1, dtick=10)
+
+    fig.update_layout(
+        title=dict(
+            text=(
+                "Рассинхронизация пчёл и растений при многофазном потеплении<br>"
+                f"<sup>D_T = {d_t:.3f} °C/год после {sim.ACCELERATION_YEAR} г.</sup>"
+            ),
+            x=0.5,
+            xanchor="center",
+        ),
+        template="plotly_white",
+        height=720,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=100, b=50),
+    )
+
     return fig
 
 

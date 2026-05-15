@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -68,12 +67,43 @@ def figure_overlap_year_with_species_icons(row: pd.Series, x: np.ndarray) -> go.
     return fig
 
 
+def render_year_control(df_year: pd.DataFrame) -> tuple[int, pd.Series]:
+    """Ползунок года в основной колонке — на телефоне боковая панель перекрывает графики."""
+    n = len(df_year)
+    with st.expander("Год симуляции", expanded=True):
+        year_idx = st.slider(
+            "Год симуляции",
+            min_value=0,
+            max_value=n - 1,
+            value=0,
+            help="Прокрутите, чтобы увидеть сдвиг фенофаз по годам (1950–2100).",
+        )
+        row = df_year.iloc[year_idx]
+        st.progress(
+            min(1.0, year_idx / max(1, n - 1)),
+            text=f"Календарный год {int(row['Год'])} · шаг {year_idx + 1} из {n}",
+        )
+    return year_idx, row
+
+
+def render_d_t_slider() -> float:
+    return st.slider(
+        "D_T — скорость потепления (°C/год)",
+        min_value=float(podt.DT_MIN),
+        max_value=float(podt.DT_MAX),
+        value=float(podt.DT_DEFAULT),
+        step=0.005,
+        format="%.3f",
+        help="Скорость роста температурной аномалии после 2010 г.",
+    )
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Пчёлы и растения: фенология",
         page_icon="🐝",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
 
     st.title("Моделирование (рас)синхронизации активности пчел и цветения растений")
@@ -84,38 +114,7 @@ def main() -> None:
     # )
 
     df_year = pm.load_simulation().reset_index(drop=True)
-    n = len(df_year)
-
-    with st.sidebar:
-        st.header("Параметры")
-        st.subheader("Год симуляции")
-        year_idx = st.slider(
-            "Индекс года",
-            min_value=0,
-            max_value=n - 1,
-            value=0,
-            # help="Соответствует году в таблице симуляции и накопленной аномалии T.",
-        )
-        row = df_year.iloc[year_idx]
-        st.progress(
-            min(1.0, year_idx / max(1, n - 1)),
-            text=f"Год {int(row['Год'])} ({year_idx + 1} / {n})",
-        )
-        # st.caption(
-        #     f"Календарный год: **{int(row['Год'])}**"
-        # )
-
-        st.divider()
-        st.subheader("Скорость потепления")
-        d_t = st.slider(
-            "D_T (°C/год)",
-            min_value=float(podt.DT_MIN),
-            max_value=float(podt.DT_MAX),
-            value=float(podt.DT_DEFAULT),
-            step=0.005,
-            format="%.3f",
-            help="Влияет только на нижний график.",
-        )
+    year_idx, row = render_year_control(df_year)
 
     # --- Блок 1: перекрытие по выбранному году (Plotly) ---
     st.subheader("1. Перекрытие фенофаз в выбранный год")
@@ -126,7 +125,8 @@ def main() -> None:
     ov = float(row["Перекрытие_Дней"])
     pb = float(row["Популяция_Пчел"])
     pp = float(row["Популяция_Растений"])
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2 = st.columns(2)
+    m3, m4 = st.columns(2)
     m1.metric("T′ (аномалия)", f"{t_anom:.2f} °C")
     m2.metric("Дней перекрытия", f"{ov:.1f}")
     m3.metric("Популяция пчёл", f"{pb:.3g}")
@@ -153,19 +153,24 @@ border-left:6px solid #3949ab;margin-top:12px;">
 
     st.divider()
 
-    # --- Блок 2: фенофазы и популяции при D_T (matplotlib) ---
+    # --- Блок 2: фенофазы и популяции при D_T (Plotly) ---
     st.subheader("2. Фенология и популяции на горизонте 1950–2100 при выбранном D_T")
+    d_t = render_d_t_slider()
     df_dt = podt.run_simulation_for_dt(d_t)
-    fig_dt = podt.figure_overlap_results(df_dt, d_t)
-    st.pyplot(fig_dt, width="stretch")
-    plt.close(fig_dt)
+    st.plotly_chart(podt.figure_overlap_results_plotly(df_dt, d_t), use_container_width=True)
 
     y_bees = first_year_at_or_below(df_dt, "Популяция_Пчел")
     y_plants = first_year_at_or_below(df_dt, "Популяция_Растений")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("D_T", f"{d_t:.3f} °C/год")
-    c2.metric("В каком году популяция пчёл станет меньше 1", "—" if y_bees is None else str(y_bees))
-    c3.metric("В каком году популяция растений станет меньше 1", "—" if y_plants is None else str(y_plants))
+    st.metric(
+        "Год, в котором популяция пчёл станет меньше 1",
+        "—" if y_bees is None else str(y_bees),
+        help="Первый год, когда численность пчёл в модели не выше 1 усл. ед.",
+    )
+    st.metric(
+        "Год, в котором популяция растений станет меньше 1",
+        "—" if y_plants is None else str(y_plants),
+        help="Первый год, когда численность растений в модели не выше 1 усл. ед.",
+    )
 
     st.divider()
     st.subheader("Динамика популяций (базовый сценарий при D_T = 0.04 °C/год)")  
