@@ -49,7 +49,7 @@ def main() -> None:
         st.header("Параметры")
         st.subheader("Год симуляции")
         year_idx = st.slider(
-            "Индекс года (кривые перекрытия)",
+            "Индекс года",
             min_value=0,
             max_value=n - 1,
             value=0,
