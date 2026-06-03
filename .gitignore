@@ -2,3 +2,8 @@
 .vscode/
 __pycache__/
 *.pyc
+visualize_activity.py
+debug_year1.py
+activity_year_01.png
+activity_year_02.png
+activity_year_03.png
